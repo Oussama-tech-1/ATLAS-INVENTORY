@@ -124,6 +124,7 @@ tr:hover td{background:rgba(192,57,43,.04);}
     <div class="tab" onclick="tab('branding')">Branding</div>
     <div class="tab" onclick="tab('menu')">Menu Builder</div>
     <div class="tab" onclick="tab('backup')">All Data</div>
+    <div class="tab" onclick="tab('reports')">📊 Reports</div>
   </div>
   <div class="content">
 
@@ -275,6 +276,29 @@ tr:hover td{background:rgba(192,57,43,.04);}
       </div>
     </div>
 
+    <!-- REPORTS -->
+    <div class="page" id="pg-reports">
+      <div class="g2" style="margin-bottom:18px;">
+        <div class="card" style="border-color:var(--danger);background:#1a0808;">
+          <div class="ctitle" style="color:var(--danger);">⚠ Low Stock Report</div>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:14px;">All items currently below their minimum stock level across every café.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn btn-p" onclick="renderLowStock()">View Report</button>
+            <button class="btn btn-n" onclick="exportCSV('low')">⬇ Export CSV</button>
+          </div>
+        </div>
+        <div class="card" style="border-color:var(--blue);background:#080d1a;">
+          <div class="ctitle" style="color:var(--blue);">🔥 Fast-Moving Items</div>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:14px;">Items ranked by total units consumed — great for purchasing and reorder decisions.</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn" style="background:var(--blue);color:#fff;" onclick="renderFastMoving()">View Report</button>
+            <button class="btn btn-n" onclick="exportCSV('fast')">⬇ Export CSV</button>
+          </div>
+        </div>
+      </div>
+      <div id="reportOutput"></div>
+    </div>
+
     <!-- ALL DATA BACKUP -->
     <div class="page" id="pg-backup">
       <div class="card" style="margin-bottom:16px;">
@@ -365,7 +389,7 @@ function logout(){
   document.getElementById('atlasPass').value='';if(db)db.ref('cafesData').off();fbOk=false;
 }
 
-const TAB_NAMES=['overview','cafes','branding','menu','backup'];
+const TAB_NAMES=['overview','cafes','branding','menu','backup','reports'];
 function tab(name){
   document.querySelectorAll('.tab').forEach((t,i)=>t.classList.toggle('active',TAB_NAMES[i]===name));
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
@@ -374,6 +398,7 @@ function tab(name){
   if(name==='cafes')renderCafeList();
   if(name==='branding'||name==='menu')fillSelects();
   if(name==='backup')renderBackup();
+  if(name==='reports')document.getElementById('reportOutput').innerHTML='';
 }
 function refresh(){renderOv();renderCafeList();fillSelects();if(activeCafe)renderMenuList();}
 
@@ -685,6 +710,107 @@ function exportAll(){
   const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(blob);
   a.download='atlas-backup-'+new Date().toISOString().slice(0,10)+'.json';a.click();
+}
+
+// ── REPORTS ──────────────────────────────────────────
+function getStock(it){return it._totalUnits!==undefined?it._totalUnits:(it.boxes||0)*(it.unitsPerBox||1);}
+
+function renderLowStock(){
+  const el=document.getElementById('reportOutput');
+  const rows=[];
+  Object.keys(data).forEach(cid=>{
+    const c=data[cid];
+    const cats=c.categories||{};const depts=c.departments||{};
+    Object.entries(c.items||{}).forEach(([,it])=>{
+      const stock=getStock(it);
+      if(stock<=(it.minStock||5)){
+        rows.push({cafe:c.name||cid,dept:depts[it.department]?.name||'—',cat:cats[it.category]?.name||'—',name:it.name,stock,boxes:it.boxes||0,upb:it.unitsPerBox||1,min:it.minStock||5,gap:(it.minStock||5)-stock});
+      }
+    });
+  });
+  if(!rows.length){el.innerHTML='<div class="card"><p style="color:var(--green);font-size:14px;">✓ No low-stock items across any café!</p></div>';return;}
+  rows.sort((a,b)=>b.gap-a.gap);
+  const date=new Date().toLocaleDateString();
+  el.innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <div class="ctitle" style="color:var(--danger);margin-bottom:0;">⚠ Low Stock — ${rows.length} items · ${date}</div>
+      <button class="btn btn-p btn-sm" onclick="exportCSV('low')">⬇ Export CSV</button>
+    </div>
+    <table><thead><tr><th>Café</th><th>Department</th><th>Category</th><th>Item</th><th>Stock</th><th>Boxes×Units</th><th>Min</th><th>Gap</th></tr></thead>
+    <tbody>${rows.map(r=>`<tr>
+      <td><strong>${r.cafe}</strong></td><td>${r.dept}</td><td>${r.cat}</td><td>${r.name}</td>
+      <td style="color:var(--danger);font-weight:700;">${r.stock}</td>
+      <td style="color:var(--muted);">${r.boxes}×${r.upb}</td>
+      <td>${r.min}</td>
+      <td><span class="badge br">-${r.gap}</span></td>
+    </tr>`).join('')}</tbody></table>
+  </div>`;
+}
+
+function renderFastMoving(){
+  const el=document.getElementById('reportOutput');
+  const rows=[];
+  Object.keys(data).forEach(cid=>{
+    const c=data[cid];
+    const cats=c.categories||{};const depts=c.departments||{};
+    Object.entries(c.items||{}).forEach(([,it])=>{
+      if((it.totalUsed||0)>0){
+        rows.push({cafe:c.name||cid,dept:depts[it.department]?.name||'—',cat:cats[it.category]?.name||'—',name:it.name,used:it.totalUsed||0,stock:getStock(it),boxes:it.boxes||0,upb:it.unitsPerBox||1});
+      }
+    });
+  });
+  if(!rows.length){el.innerHTML='<div class="card"><p style="color:var(--muted);font-size:14px;">No usage data yet — stock-outs will appear here once staff start using the system.</p></div>';return;}
+  rows.sort((a,b)=>b.used-a.used);
+  const date=new Date().toLocaleDateString();
+  el.innerHTML=`<div class="card">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+      <div class="ctitle" style="color:var(--blue);margin-bottom:0;">🔥 Fast-Moving Items — ${rows.length} items · ${date}</div>
+      <button class="btn btn-sm" style="background:var(--blue);color:#fff;" onclick="exportCSV('fast')">⬇ Export CSV</button>
+    </div>
+    <table><thead><tr><th>#</th><th>Café</th><th>Department</th><th>Category</th><th>Item</th><th>Total Used</th><th>Current Stock</th><th>Boxes×Units</th></tr></thead>
+    <tbody>${rows.map((r,i)=>`<tr>
+      <td style="color:var(--muted);font-weight:700;">${i+1}</td>
+      <td><strong>${r.cafe}</strong></td><td>${r.dept}</td><td>${r.cat}</td><td>${r.name}</td>
+      <td style="color:${i<3?'var(--warn)':'var(--text)'};font-weight:${i<3?'700':'400'};">${r.used} ${i===0?'🔥':i===1?'🔥':i===2?'🔥':''}</td>
+      <td style="color:${r.stock<=(r.boxes*r.upb*0.2)?'var(--danger)':'var(--green)'};">${r.stock}</td>
+      <td style="color:var(--muted);">${r.boxes}×${r.upb}</td>
+    </tr>`).join('')}</tbody></table>
+  </div>`;
+}
+
+function exportCSV(type){
+  let csvRows=[];
+  if(type==='low'){
+    csvRows.push(['Café','Department','Category','Item','Stock (units)','Boxes','Units per Box','Min Stock','Gap']);
+    Object.keys(data).forEach(cid=>{
+      const c=data[cid];const cats=c.categories||{};const depts=c.departments||{};
+      Object.entries(c.items||{}).forEach(([,it])=>{
+        const stock=getStock(it);
+        if(stock<=(it.minStock||5)){
+          csvRows.push([c.name||cid,depts[it.department]?.name||'',cats[it.category]?.name||'',it.name,stock,it.boxes||0,it.unitsPerBox||1,it.minStock||5,(it.minStock||5)-stock]);
+        }
+      });
+    });
+    downloadCSV(csvRows,'atlas-low-stock-'+today()+'.csv');
+  }else{
+    csvRows.push(['Rank','Café','Department','Category','Item','Total Units Used','Current Stock','Boxes','Units per Box']);
+    const rows=[];
+    Object.keys(data).forEach(cid=>{
+      const c=data[cid];const cats=c.categories||{};const depts=c.departments||{};
+      Object.entries(c.items||{}).forEach(([,it])=>{
+        rows.push([c.name||cid,depts[it.department]?.name||'',cats[it.category]?.name||'',it.name,it.totalUsed||0,getStock(it),it.boxes||0,it.unitsPerBox||1]);
+      });
+    });
+    rows.sort((a,b)=>b[4]-a[4]);
+    rows.forEach((r,i)=>csvRows.push([i+1,...r]));
+    downloadCSV(csvRows,'atlas-fast-moving-'+today()+'.csv');
+  }
+}
+function today(){return new Date().toISOString().slice(0,10);}
+function downloadCSV(rows,filename){
+  const csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=filename;a.click();
 }
 
 // UTILS
